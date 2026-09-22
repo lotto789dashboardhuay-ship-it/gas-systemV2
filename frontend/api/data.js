@@ -1,37 +1,30 @@
 // api/data.js
-import { kv } from "@vercel/kv";
+import fs from "node:fs/promises";
+import path from "node:path";
 
-const KEY = "gas:data";
+const DATA_FILE = path.join(process.cwd(), "src/pages/Data.json");
 
 export default async function handler(req, res) {
-  // ---------- GET ----------
   if (req.method === "GET") {
     try {
-      const data = await kv.get(KEY);
-      return res.status(200).json(data ?? { tables: {} });
-    } catch (e) {
-      console.error("KV GET error:", e);
-      return res.status(500).json({ error: "read failed" });
+      const raw = await fs.readFile(DATA_FILE, "utf-8");
+      res.setHeader("Content-Type", "application/json");
+      return res.status(200).send(raw);
+    } catch {
+      return res.status(200).json({ tables: {} });
     }
   }
 
-  // ---------- POST (เขียนทับทั้งก้อน) ----------
   if (req.method === "POST") {
     try {
-      const body =
-        typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
-      if (!body || typeof body !== "object" || !body.tables) {
-        return res.status(400).json({ error: "body must be { tables: {...} }" });
-      }
-
-      await kv.set(KEY, body);
+      const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      JSON.parse(body);
+      await fs.writeFile(DATA_FILE, body, "utf-8");
       return res.json({ ok: true, savedAt: Date.now() });
     } catch (e) {
-      console.error("KV SET error:", e);
       return res.status(400).json({ error: e.message });
     }
   }
 
-  return res.status(405).json({ error: "Method not allowed" });
+  res.status(405).end();
 }
