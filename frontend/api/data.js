@@ -1,69 +1,30 @@
 // api/data.js
-export const config = { runtime: "nodejs" };
+import fs from "node:fs/promises";
+import path from "node:path";
 
-const KEY = "gas_system_data";
+const DATA_FILE = path.join(process.cwd(), "src/pages/Data.json");
 
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(204).end();
-
-  // อ่าน env var — Vercel inject ให้อัตโนมัติหลัง Connect Upstash
-  const url =
-    process.env.KV_REST_API_URL ||
-    process.env.UPSTASH_REDIS_REST_URL;
-  const token =
-    process.env.KV_REST_API_TOKEN ||
-    process.env.UPSTASH_REDIS_REST_TOKEN;
-
-  if (!url || !token) {
-    return res.status(500).json({
-      stage: "env",
-      error: "Missing KV_REST_API_URL / KV_REST_API_TOKEN",
-      hint: "Vercel → Settings → Env Variables → เช็ค 2 ตัวนี้ + Redeploy",
-    });
-  }
-
-  // Import @upstash/redis
-  let Redis;
-  try {
-    ({ Redis } = await import("@upstash/redis"));
-  } catch (e) {
-    return res.status(500).json({
-      stage: "import",
-      error: e.message,
-      hint: "รัน npm install @upstash/redis แล้ว commit package.json + lock",
-    });
-  }
-
-  const redis = new Redis({ url, token });
-
-  // -------- GET --------
   if (req.method === "GET") {
     try {
-      const data = await redis.get(KEY);
-      return res.status(200).json(data || { tables: {} });
-    } catch (e) {
-      return res.status(500).json({ stage: "redis.get", error: e.message });
+      const raw = await fs.readFile(DATA_FILE, "utf-8");
+      res.setHeader("Content-Type", "application/json");
+      return res.status(200).send(raw);
+    } catch {
+      return res.status(200).json({ tables: {} });
     }
   }
 
-  // -------- POST --------
   if (req.method === "POST") {
     try {
-      let body = req.body;
-      if (typeof body === "string") body = JSON.parse(body);
-      if (!body || typeof body !== "object") {
-        return res.status(400).json({ stage: "validate", error: "Invalid JSON" });
-      }
-      await redis.set(KEY, body);
-      return res.status(200).json({ ok: true, savedAt: Date.now() });
+      const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      JSON.parse(body);
+      await fs.writeFile(DATA_FILE, body, "utf-8");
+      return res.json({ ok: true, savedAt: Date.now() });
     } catch (e) {
-      return res.status(400).json({ stage: "redis.set", error: e.message });
+      return res.status(400).json({ error: e.message });
     }
   }
 
-  return res.status(405).json({ error: "Method not allowed" });
+  res.status(405).end();
 }
