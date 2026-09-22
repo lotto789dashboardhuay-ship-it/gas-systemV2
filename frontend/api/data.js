@@ -1,13 +1,14 @@
 // api/data.js
-import fs from "node:fs/promises";
-import path from "node:path";
+import { put, head } from "@vercel/blob";
 
-const DATA_FILE = path.join(process.cwd(), "src/pages/Data.json");
+const BLOB_NAME = "data.json";
 
 export default async function handler(req, res) {
   if (req.method === "GET") {
     try {
-      const raw = await fs.readFile(DATA_FILE, "utf-8");
+      const blob = await head(BLOB_NAME);
+      const r = await fetch(blob.url, { cache: "no-store" });
+      const raw = await r.text();
       res.setHeader("Content-Type", "application/json");
       return res.status(200).send(raw);
     } catch {
@@ -17,9 +18,17 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     try {
-      const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
-      JSON.parse(body);
-      await fs.writeFile(DATA_FILE, body, "utf-8");
+      const body =
+        typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      JSON.parse(body); // validate
+
+      await put(BLOB_NAME, body, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: "application/json",
+      });
+
       return res.json({ ok: true, savedAt: Date.now() });
     } catch (e) {
       return res.status(400).json({ error: e.message });
