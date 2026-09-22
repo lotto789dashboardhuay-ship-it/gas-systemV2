@@ -1,83 +1,178 @@
 // api/data.js
-// ใช้ Vercel Blob REST API โดยตรงผ่าน fetch (ไม่ต้องติดตั้ง package)
+// ====================================================
+// Vercel Serverless Function
+// ใช้ Vercel Blob REST API ผ่าน native fetch (ไม่ต้องติดตั้ง npm)
+// ====================================================
 
-const BLOB_TOKEN =
-  process.env.BLOB_READ_WRITE_TOKEN ||
-  "vercel_blob_rw_m4VrIT5HpJQaWumO_d1Y9BZ9jOZmilVgMzKoA2LYBl12ahs";
-
-const BLOB_KEY = "gas-system-data.json";
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
+const BLOB_STORE_ID =
+  process.env.BLOB_STORE_ID || "store_m4VrIT5HpJQaWumO";
+const BLOB_PATHNAME = "gas-system/Data.json";
 const BLOB_API = "https://blob.vercel-storage.com";
+const API_VERSION = "7";
 
-async function findBlobUrl() {
-  const r = await fetch(`${BLOB_API}/?prefix=${encodeURIComponent(BLOB_KEY)}`, {
-    headers: {
-      Authorization: `Bearer ${BLOB_TOKEN}`,
-      "x-api-version": "7",
-    },
-    cache: "no-store",
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
-  const hit = (j.blobs || []).find((b) => b.pathname === BLOB_KEY);
-  return hit ? hit.url : null;
+// ---------- Utils ----------
+function jsonResponse(res, status, obj) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(JSON.stringify(obj));
 }
 
+// ---------- List blobs เพื่อหาลิงก์ของ Data.json ----------
+async function listTargetBlob() {
+  const url =
+    `${BLOB_API}?prefix=${encodeURIComponent(BLOB_PATHNAME)}&limit=100`;
+
+  const r = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${BLOB_TOKEN}`,
+      "x-api-version": API_VERSION,
+    },
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`Blob list failed (${r.status}): ${t}`);
+  }
+
+  const data = await r.json();
+  const blobs = Array.isArray(data.blobs) ? data.blobs : [];
+  return blobs.find((b) => b.pathname === BLOB_PATHNAME) || null;
+}
+
+// ---------- อ่านเนื้อหา blob ----------
+async function readBlobText(blob) {
+  const target = blob.downloadUrl || blob.url;
+
+  // ลอง fetch แบบมี auth ก่อน (รองรับ private store)
+  let r = await fetch(target, {
+    headers: { Authorization: `Bearer ${BLOB_TOKEN}` },
+    cache: "no-store",
+  });
+
+  // ถ้าไม่ผ่าน ลองแบบไม่มี auth (เผื่อ public)
+  if (!r.ok) {
+    r = await fetch(target, { cache: "no-store" });
+  }
+
+  if (!r.ok) throw new Error(`Blob download failed (${r.status})`);
+  return await r.text();
+}
+
+// ---------- อัปโหลด content ทับ pathname เดิม ----------
+async function uploadBlob(content) {
+  const url = `${BLOB_API}/${BLOB_PATHNAME}`;
+
+  const r = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${BLOB_TOKEN}`,
+      "x-api-version": API_VERSION,
+      "x-content-type": "application/json; charset=utf-8",
+      // 0 = ไม่ใส่ random suffix → pathname คงที่ ทับไฟล์เดิมทุกครั้ง
+      "x-add-random-suffix": "0",
+      "x-vercel-blob-store-id": BLOB_STORE_ID,
+    },
+    body: content,
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`Blob upload failed (${r.status}): ${t}`);
+  }
+
+  return r.json();
+}
+
+// ---------- อ่าน body แบบ raw (รองรับทั้ง JSON body และ sendBeacon) ----------
+async function readRequestBody(req) {
+  // Vercel parse body ให้แล้วถ้า Content-Type = application/json
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === "string") return req.body;
+    if (Buffer.isBuffer(req.body)) return req.body.toString("utf-8");
+    return JSON.stringify(req.body);
+  }
+
+  // Fallback: อ่าน stream เอง (สำหรับ sendBeacon)
+  const chunks = [];
+  await new Promise((resolve, reject) => {
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", resolve);
+    req.on("error", reject);
+  });
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+// ====================================================
+// Handler
+// ====================================================
 export default async function handler(req, res) {
+  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-store");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") {
+    res.statusCode = 204;
+    return res.end();
+  }
 
-  // ---------- GET ----------
+  if (!BLOB_TOKEN) {
+    return jsonResponse(res, 500, {
+      error: "Missing BLOB_READ_WRITE_TOKEN env variable",
+    });
+  }
+
+  // ---------------- GET ----------------
   if (req.method === "GET") {
     try {
-      const url = await findBlobUrl();
-      if (!url) return res.status(200).json({ tables: {} });
+      const blob = await listTargetBlob();
 
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) return res.status(200).json({ tables: {} });
-
-      const text = await r.text();
-      res.setHeader("Content-Type", "application/json");
-      return res.status(200).send(text);
-    } catch {
-      return res.status(200).json({ tables: {} });
-    }
-  }
-
-  // ---------- POST ----------
-  if (req.method === "POST") {
-    try {
-      let body = req.body;
-      if (typeof body !== "string") body = JSON.stringify(body ?? {});
-      JSON.parse(body); // validate JSON
-
-      const r = await fetch(`${BLOB_API}/${BLOB_KEY}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${BLOB_TOKEN}`,
-          "x-api-version": "7",
-          "x-content-type": "application/json",
-          "x-add-random-suffix": "0",
-          "x-allow-overwrite": "1",
-          "Content-Type": "application/json",
-        },
-        body,
-      });
-
-      if (!r.ok) {
-        const t = await r.text();
-        return res.status(400).json({ error: t || "blob upload failed" });
+      if (!blob) {
+        // ยังไม่มีไฟล์บน Blob → คืนค่าเริ่มต้น
+        return jsonResponse(res, 200, { tables: {} });
       }
 
-      const j = await r.json().catch(() => ({}));
-      return res.json({ ok: true, savedAt: Date.now(), url: j.url });
-    } catch (e) {
-      return res.status(400).json({ error: e.message });
+      const text = await readBlobText(blob);
+
+      // Validate ว่าเป็น JSON จริง
+      try {
+        JSON.parse(text);
+      } catch {
+        return jsonResponse(res, 200, { tables: {} });
+      }
+
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(text);
+      return;
+    } catch (err) {
+      console.error("[GET /api/data]", err);
+      return jsonResponse(res, 500, { error: err.message || "Unknown error" });
     }
   }
 
-  res.status(405).end();
+  // ---------------- POST ----------------
+  if (req.method === "POST") {
+    try {
+      const raw = (await readRequestBody(req)) || "";
+      if (!raw.trim()) {
+        return jsonResponse(res, 400, { error: "Empty body" });
+      }
+
+      // Validate JSON ก่อนเขียน
+      JSON.parse(raw);
+
+      await uploadBlob(raw);
+
+      return jsonResponse(res, 200, { ok: true, savedAt: Date.now() });
+    } catch (err) {
+      console.error("[POST /api/data]", err);
+      return jsonResponse(res, 400, { error: err.message || "Unknown error" });
+    }
+  }
+
+  return jsonResponse(res, 405, { error: "Method Not Allowed" });
 }
