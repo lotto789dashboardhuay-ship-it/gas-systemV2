@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap');
+
+body {
+  margin: 0;
+  background-color: #0f172a; /* กำหนดพื้นหลังเข้มมาตรฐาน */
+  color: #f8fafc; /* กำหนดสีข้อความหลักเป็นสีขาว/สว่าง */
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* บังคับเฉพาะ font-family โดยไม่ไปทับ color หรือ font-size เดิมของ Component */
+*,
+*::before,
+*::after,
+html,
+body,
+h1, h2, h3, h4, h5, h6,
+p, span, div, a, label,
+button, input, select, textarea {
+  font-family: 'Prompt', sans-serif !important;
+}
+
+/* คืนค่าสีสว่างให้หัวข้อและข้อความหลัก */
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff;
+}
