@@ -1,64 +1,30 @@
-// vite.config.js
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import fs from "node:fs";
+// api/data.js (Vercel)
+import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = path.resolve(__dirname, "src/pages/Data.json");
+const DATA_FILE = path.join(process.cwd(), "src/pages/Data.json");
 
-function dataApiMiddleware(req, res, next) {
-  // ตัด prefix ที่ mount มาออก แล้วเช็ค path
-  const url = req.url || "";
-
+export default async function handler(req, res) {
   if (req.method === "GET") {
     try {
-      const raw = fs.existsSync(DATA_FILE)
-        ? fs.readFileSync(DATA_FILE, "utf-8")
-        : JSON.stringify({ tables: {} });
+      const raw = await fs.readFile(DATA_FILE, "utf-8");
       res.setHeader("Content-Type", "application/json");
-      res.end(raw);
-    } catch (e) {
-      res.statusCode = 500;
-      res.end(JSON.stringify({ error: e.message }));
+      return res.status(200).send(raw);
+    } catch {
+      return res.status(200).json({ tables: {} });
     }
-    return;
   }
 
   if (req.method === "POST") {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      try {
-        JSON.parse(body); // validate
-        fs.writeFileSync(DATA_FILE, body, "utf-8");
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ ok: true, savedAt: Date.now() }));
-      } catch (e) {
-        res.statusCode = 400;
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    });
-    return;
+    try {
+      const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      JSON.parse(body); // validate
+      await fs.writeFile(DATA_FILE, body, "utf-8");
+      return res.json({ ok: true, savedAt: Date.now() });
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
   }
 
-  next();
+  res.status(405).end();
 }
-
-export default defineConfig({
-  plugins: [
-    react(),
-    {
-      name: "data-file-api",
-      // ใช้ตอน dev
-      configureServer(server) {
-        server.middlewares.use("/api/data", dataApiMiddleware);
-      },
-      // ใช้ตอน vite preview (จำลอง production)
-      configurePreviewServer(server) {
-        server.middlewares.use("/api/data", dataApiMiddleware);
-      },
-    },
-  ],
-});
